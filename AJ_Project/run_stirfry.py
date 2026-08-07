@@ -2,7 +2,7 @@
 run_stirfry.py — 두산 A0509 볶음 공정 씬 + 키보드 다중모드 제어
 
 씬: 볶음 도면을 기준으로 Bonitkit + V2 조리/준비 테이블 + 그릇 11개를
-    A0509 작업 반경 안에 배치한다. A0509는 스탠드 상단 z=0.8에 고정 장착한다.
+    A0509 작업 반경 안에 배치한다. A0509는 전용 stand 상단 z=0.81에 고정 장착한다.
 제어: 실행 중 키로 모드를 바꿔가며 직접 조작.
 
   ┌─────────────── 키 맵 ───────────────┐
@@ -13,7 +13,7 @@ run_stirfry.py — 두산 A0509 볶음 공정 씬 + 키보드 다중모드 제�
   └──────────────────────────────────────┘
 
 제어 로직은 controllers/doosan_controller.py (JSC/TSC/OSC 통합).
-좌표 목표는 '로봇 베이스 기준'. OSC는 월드 텐서를 쓰므로 장착높이(+0.8) 보정해 넘긴다.
+좌표 목표는 '로봇 베이스 기준'. OSC는 월드 텐서를 쓰므로 장착높이(+0.81) 보정해 넘긴다.
 
 실행:  conda activate issac_env  &&  python run_stirfry.py
        (OSC용 gymtorch→ninja 필요)
@@ -28,32 +28,34 @@ from doosan_controller import DoosanController
 
 asset_root = os.environ.get("ISAAC_ASSETS", "/home/henry/Desktop/Issac_asset/isaac_assets")
 
-BASE_Z     = 0.8      # 팔 장착 높이(선반 상단면)
+BASE_Z     = 0.81     # A0509_Stand.step의 장착 상판 높이
 CART_STEP  = 0.01     # 좌표 목표 이동 스텝(m)
 JOINT_STEP = 0.05     # 관절 이동 스텝(rad)
 HOME_Q     = np.array([0.0, 0.0, 1.2, 0.0, 1.0, 0.0], dtype=np.float32)
 
-# 볶음 도면 배치. 로봇 스탠드(0.6 x 0.6 m)와 각 설비 사이에 최소
-# 0.15 m의 여유를 두면서, 모든 그릇 중심을 베이스에서 0.72 m 안에 둔다.
-BONITKIT_POS       = (0.0, 1.02, 0.0)
+# 볶음 도면 배치. 새 stand(0.6 x 0.9 m)와 각 설비 사이에 최소
+# 0.15 m의 여유를 두면서, 모든 그릇 중심을 베이스에서 0.83 m 안에 둔다.
+BONITKIT_POS       = (0.0, 1.07, 0.0)
 COMPLETE_TABLE_POS = (-0.625, 0.10, 0.0)
-PREPARE_TABLE_POS  = (0.10, -0.10, 0.0)
+PREPARE_TABLE_POS  = (0.10, -0.25, 0.0)
 TABLE_YAW_DEG      = 90.0
 TABLE_TOP_Z        = 0.85
-BOWL_SEAT_Z        = TABLE_TOP_Z - 0.04
+COOK_BOWL_Z        = TABLE_TOP_Z - 0.04
+INGREDIENT_BOWL_Z  = TABLE_TOP_Z - 0.026
 TABLE_ASSET_VERSION = "v2"
+A0509_STAND_URDF    = "urdf/a0509_stand/a0509_stand.urdf"
 COMPLETE_TABLE_URDF = "urdf/complete_table/complete_table.urdf"
 PREPARE_TABLE_URDF  = "urdf/prepare_table/prepare_table.urdf"
 
 # V2 STEP 원점 기준 실제 홀 중심. V2에서도 중심은 기존과 동일하다.
-# 조리 그릇은 Ø250 mm, 재료 그릇은 도면의 Ø200 mm 제한에 맞춰
-# 동일 asset을 0.8배로 사용한다.
+# 조리 그릇은 Ø250 mm, 재료 그릇은 도면의 Ø200 mm 제한보다 작은
+# Ø187.5 mm(0.75배)로 사용해 200 mm 간격의 이웃 그릇과 겹치지 않게 한다.
 COMPLETE_BOWL_LOCAL_XY = (0.25, 0.0)
 PREPARE_BOWL_LOCAL_XY = (
     *((-0.475, y) for y in (-0.30, -0.10, 0.10, 0.30, 0.50)),
     *((x, -0.475) for x in (-0.30, -0.10, 0.10, 0.30, 0.50)),
 )
-INGREDIENT_BOWL_SCALE = 0.8
+INGREDIENT_BOWL_SCALE = 0.75
 
 
 def pose(x, y, z=0.0, yaw_deg=0.0):
@@ -94,8 +96,15 @@ gym.add_ground(sim, pp)
 env = gym.create_env(sim, gymapi.Vec3(-1.5, -1.5, 0), gymapi.Vec3(1.5, 1.8, 2.2), 1)
 
 stand_opts = gymapi.AssetOptions(); stand_opts.fix_base_link = True
-stand_asset = gym.load_asset(sim, asset_root, "urdf/robot_stand/robot_stand.urdf", stand_opts)
-gym.create_actor(env, stand_asset, gymapi.Transform(p=gymapi.Vec3(0, 0, 0)), "stand", 0, 0)
+stand_asset = gym.load_asset(sim, asset_root, A0509_STAND_URDF, stand_opts)
+gym.create_actor(
+    env,
+    stand_asset,
+    gymapi.Transform(p=gymapi.Vec3(0, 0, 0)),
+    "a0509_stand",
+    0,
+    0,
+)
 
 # 도면 기준 고정 설비. +Y를 벽/Bonitkit 방향으로 두고, 두 테이블은
 # 중앙 로봇을 감싸되 스탠드와 겹치지 않도록 0.15 m 띄운다.
@@ -127,33 +136,35 @@ gym.create_actor(
     0,
 )
 
-# 조리 테이블의 큰 홀 1개: 원본 Ø250 mm bowl을 recess 바닥(z=0.81)에 안착.
+# 조리 테이블의 큰 홀 1개: 원본 Ø250 mm bowl을 홀 바닥(z=0.81)에 안착.
 complete_bowl_xy = local_xy_to_world(
     COMPLETE_BOWL_LOCAL_XY, COMPLETE_TABLE_POS[:2], TABLE_YAW_DEG
 )
 gym.create_actor(
     env,
     bowl_asset,
-    pose(*complete_bowl_xy, BOWL_SEAT_Z, yaw_deg=TABLE_YAW_DEG),
+    pose(*complete_bowl_xy, COOK_BOWL_Z, yaw_deg=TABLE_YAW_DEG),
     "stirfry_bowl_cook",
     0,
     0,
 )
 
-# 준비 테이블의 Ø200 mm 홀 10개. 메시에 파인 실제 local 중심을 사용한다.
+# 준비 테이블의 Ø200 mm 홀 10개. 실제 local 중심을 유지하고 bowl만
+# 0.75배로 줄여 림 사이에 12.5 mm 간격을 둔다.
 for index, local_xy in enumerate(PREPARE_BOWL_LOCAL_XY, start=1):
     bowl_xy = local_xy_to_world(local_xy, PREPARE_TABLE_POS[:2], TABLE_YAW_DEG)
     bowl_handle = gym.create_actor(
         env,
         bowl_asset,
-        pose(*bowl_xy, BOWL_SEAT_Z, yaw_deg=TABLE_YAW_DEG),
+        pose(*bowl_xy, INGREDIENT_BOWL_Z, yaw_deg=TABLE_YAW_DEG),
         f"stirfry_bowl_ingredient_{index:02d}",
         0,
         0,
     )
     gym.set_actor_scale(env, bowl_handle, INGREDIENT_BOWL_SCALE)
 
-# 순수 A0509를 선반 상단(z=0.8)에 고정 장착 (OSC 동역학이 깔끔하도록 고정베이스 순수팔)
+# 순수 A0509를 전용 stand 상판(z=0.81)에 고정 장착
+# (OSC 동역학이 깔끔하도록 고정베이스 순수팔)
 arm = DoosanController(
     gym, sim, env, asset_root,
     urdf="urdf/doosan_a0509/a0509.urdf",
@@ -192,7 +203,7 @@ for key, act in keymap.items():
 
 print(f"""
 ========== 두산 A0509 키보드 제어 ==========
-[씬] {TABLE_ASSET_VERSION.upper()} complete/prepare table + bowl 11개
+[씬] A0509 stand + {TABLE_ASSET_VERSION.upper()} tables + bowl 11개
  [모드]  1:JSC(관절)   2:TSC(좌표+IK)   3:OSC(좌표+동역학)
  [좌표 · TSC/OSC]  W/S:X±  A/D:Y±  Q/E:Z±
  [관절 · JSC]      J/L:관절선택   U/O:각도±
