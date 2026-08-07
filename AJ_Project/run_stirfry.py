@@ -1,7 +1,7 @@
 """
 run_stirfry.py — 두산 A0509 볶음 공정 씬 + 키보드 다중모드 제어
 
-씬: 볶음 도면을 기준으로 Bonitkit + 조리/준비 테이블 + 그릇 11개를
+씬: 볶음 도면을 기준으로 Bonitkit + V2 조리/준비 테이블 + 그릇 11개를
     A0509 작업 반경 안에 배치한다. A0509는 스탠드 상단 z=0.8에 고정 장착한다.
 제어: 실행 중 키로 모드를 바꿔가며 직접 조작.
 
@@ -41,9 +41,13 @@ PREPARE_TABLE_POS  = (0.10, -0.10, 0.0)
 TABLE_YAW_DEG      = 90.0
 TABLE_TOP_Z        = 0.85
 BOWL_SEAT_Z        = TABLE_TOP_Z - 0.04
+TABLE_ASSET_VERSION = "v2"
+COMPLETE_TABLE_URDF = "urdf/complete_table/complete_table.urdf"
+PREPARE_TABLE_URDF  = "urdf/prepare_table/prepare_table.urdf"
 
-# STEP 원점 기준 실제 홀 중심. 조리 그릇은 Ø250 mm, 재료 그릇은
-# 도면의 Ø200 mm 제한에 맞춰 동일 asset을 0.8배로 사용한다.
+# V2 STEP 원점 기준 실제 홀 중심. V2에서도 중심은 기존과 동일하다.
+# 조리 그릇은 Ø250 mm, 재료 그릇은 도면의 Ø200 mm 제한에 맞춰
+# 동일 asset을 0.8배로 사용한다.
 COMPLETE_BOWL_LOCAL_XY = (0.25, 0.0)
 PREPARE_BOWL_LOCAL_XY = (
     *((-0.475, y) for y in (-0.30, -0.10, 0.10, 0.30, 0.50)),
@@ -98,10 +102,10 @@ gym.create_actor(env, stand_asset, gymapi.Transform(p=gymapi.Vec3(0, 0, 0)), "st
 fixed_opts = gymapi.AssetOptions(); fixed_opts.fix_base_link = True
 bonitkit_asset = gym.load_asset(sim, asset_root, "urdf/bonitkit/bonitkit.urdf", fixed_opts)
 complete_table_asset = gym.load_asset(
-    sim, asset_root, "urdf/complete_table/complete_table.urdf", fixed_opts
+    sim, asset_root, COMPLETE_TABLE_URDF, fixed_opts
 )
 prepare_table_asset = gym.load_asset(
-    sim, asset_root, "urdf/prepare_table/prepare_table.urdf", fixed_opts
+    sim, asset_root, PREPARE_TABLE_URDF, fixed_opts
 )
 bowl_asset = gym.load_asset(sim, asset_root, "urdf/stirfry_bowl/stirfry_bowl.urdf", fixed_opts)
 
@@ -186,8 +190,9 @@ keymap = {
 for key, act in keymap.items():
     gym.subscribe_viewer_keyboard_event(viewer, key, act)
 
-print("""
+print(f"""
 ========== 두산 A0509 키보드 제어 ==========
+[씬] {TABLE_ASSET_VERSION.upper()} complete/prepare table + bowl 11개
  [모드]  1:JSC(관절)   2:TSC(좌표+IK)   3:OSC(좌표+동역학)
  [좌표 · TSC/OSC]  W/S:X±  A/D:Y±  Q/E:Z±
  [관절 · JSC]      J/L:관절선택   U/O:각도±
