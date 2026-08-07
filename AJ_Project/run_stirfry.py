@@ -1,7 +1,8 @@
 """
-run.py — 두산 A0509 키보드 다중모드 제어 (JSC / TSC / OSC)
+run_stirfry.py — 두산 A0509 볶음 공정 씬 + 키보드 다중모드 제어
 
-씬: 선반(고정) + A0509 팔(선반 상단 z=0.8에 고정 장착) + 에어 컴프레셔(선반 안).
+씬: 볶음 도면을 기준으로 Bonitkit + 조리/준비 테이블 + 그릇 11개를
+    A0509 작업 반경 안에 배치한다. A0509는 스탠드 상단 z=0.8에 고정 장착한다.
 제어: 실행 중 키로 모드를 바꿔가며 직접 조작.
 
   ┌─────────────── 키 맵 ───────────────┐
@@ -14,7 +15,8 @@ run.py — 두산 A0509 키보드 다중모드 제어 (JSC / TSC / OSC)
 제어 로직은 controllers/doosan_controller.py (JSC/TSC/OSC 통합).
 좌표 목표는 '로봇 베이스 기준'. OSC는 월드 텐서를 쓰므로 장착높이(+0.8) 보정해 넘긴다.
 
-실행:  conda activate issac_env  &&  python run.py     (OSC용 gymtorch→ninja 필요)
+실행:  conda activate issac_env  &&  python run_stirfry.py
+       (OSC용 gymtorch→ninja 필요)
 """
 import os
 import sys
@@ -30,6 +32,43 @@ BASE_Z     = 0.8      # 팔 장착 높이(선반 상단면)
 CART_STEP  = 0.01     # 좌표 목표 이동 스텝(m)
 JOINT_STEP = 0.05     # 관절 이동 스텝(rad)
 HOME_Q     = np.array([0.0, 0.0, 1.2, 0.0, 1.0, 0.0], dtype=np.float32)
+
+# 볶음 도면 배치. 로봇 스탠드(0.6 x 0.6 m)와 각 설비 사이에 최소
+# 0.15 m의 여유를 두면서, 모든 그릇 중심을 베이스에서 0.72 m 안에 둔다.
+BONITKIT_POS       = (0.0, 1.02, 0.0)
+COMPLETE_TABLE_POS = (-0.625, 0.10, 0.0)
+PREPARE_TABLE_POS  = (0.10, -0.10, 0.0)
+TABLE_YAW_DEG      = 90.0
+TABLE_TOP_Z        = 0.85
+BOWL_SEAT_Z        = TABLE_TOP_Z - 0.04
+
+# STEP 원점 기준 실제 홀 중심. 조리 그릇은 Ø250 mm, 재료 그릇은
+# 도면의 Ø200 mm 제한에 맞춰 동일 asset을 0.8배로 사용한다.
+COMPLETE_BOWL_LOCAL_XY = (0.25, 0.0)
+PREPARE_BOWL_LOCAL_XY = (
+    *((-0.475, y) for y in (-0.30, -0.10, 0.10, 0.30, 0.50)),
+    *((x, -0.475) for x in (-0.30, -0.10, 0.10, 0.30, 0.50)),
+)
+INGREDIENT_BOWL_SCALE = 0.8
+
+
+def pose(x, y, z=0.0, yaw_deg=0.0):
+    """Z축 yaw를 포함한 actor pose를 만든다."""
+    rotation = gymapi.Quat.from_axis_angle(
+        gymapi.Vec3(0, 0, 1), np.radians(yaw_deg)
+    )
+    return gymapi.Transform(p=gymapi.Vec3(x, y, z), r=rotation)
+
+
+def local_xy_to_world(local_xy, origin_xy, yaw_deg):
+    """테이블 local XY의 홀 중심을 world XY로 변환한다."""
+    x, y = local_xy
+    yaw = np.radians(yaw_deg)
+    c, s = np.cos(yaw), np.sin(yaw)
+    return (
+        origin_xy[0] + c * x - s * y,
+        origin_xy[1] + s * x + c * y,
+    )
 
 # ============================================================ [1] 시뮬
 gym = gymapi.acquire_gym()
@@ -48,11 +87,67 @@ pp = gymapi.PlaneParams(); pp.normal = gymapi.Vec3(0, 0, 1)
 gym.add_ground(sim, pp)
 
 # ============================================================ [2] 씬
-env = gym.create_env(sim, gymapi.Vec3(-1, -1, 0), gymapi.Vec3(1, 1, 2), 1)
+env = gym.create_env(sim, gymapi.Vec3(-1.5, -1.5, 0), gymapi.Vec3(1.5, 1.8, 2.2), 1)
 
 stand_opts = gymapi.AssetOptions(); stand_opts.fix_base_link = True
 stand_asset = gym.load_asset(sim, asset_root, "urdf/robot_stand/robot_stand.urdf", stand_opts)
 gym.create_actor(env, stand_asset, gymapi.Transform(p=gymapi.Vec3(0, 0, 0)), "stand", 0, 0)
+
+# 도면 기준 고정 설비. +Y를 벽/Bonitkit 방향으로 두고, 두 테이블은
+# 중앙 로봇을 감싸되 스탠드와 겹치지 않도록 0.15 m 띄운다.
+fixed_opts = gymapi.AssetOptions(); fixed_opts.fix_base_link = True
+bonitkit_asset = gym.load_asset(sim, asset_root, "urdf/bonitkit/bonitkit.urdf", fixed_opts)
+complete_table_asset = gym.load_asset(
+    sim, asset_root, "urdf/complete_table/complete_table.urdf", fixed_opts
+)
+prepare_table_asset = gym.load_asset(
+    sim, asset_root, "urdf/prepare_table/prepare_table.urdf", fixed_opts
+)
+bowl_asset = gym.load_asset(sim, asset_root, "urdf/stirfry_bowl/stirfry_bowl.urdf", fixed_opts)
+
+gym.create_actor(env, bonitkit_asset, pose(*BONITKIT_POS), "bonitkit", 0, 0)
+gym.create_actor(
+    env,
+    complete_table_asset,
+    pose(*COMPLETE_TABLE_POS, yaw_deg=TABLE_YAW_DEG),
+    "complete_table",
+    0,
+    0,
+)
+gym.create_actor(
+    env,
+    prepare_table_asset,
+    pose(*PREPARE_TABLE_POS, yaw_deg=TABLE_YAW_DEG),
+    "prepare_table",
+    0,
+    0,
+)
+
+# 조리 테이블의 큰 홀 1개: 원본 Ø250 mm bowl을 recess 바닥(z=0.81)에 안착.
+complete_bowl_xy = local_xy_to_world(
+    COMPLETE_BOWL_LOCAL_XY, COMPLETE_TABLE_POS[:2], TABLE_YAW_DEG
+)
+gym.create_actor(
+    env,
+    bowl_asset,
+    pose(*complete_bowl_xy, BOWL_SEAT_Z, yaw_deg=TABLE_YAW_DEG),
+    "stirfry_bowl_cook",
+    0,
+    0,
+)
+
+# 준비 테이블의 Ø200 mm 홀 10개. 메시에 파인 실제 local 중심을 사용한다.
+for index, local_xy in enumerate(PREPARE_BOWL_LOCAL_XY, start=1):
+    bowl_xy = local_xy_to_world(local_xy, PREPARE_TABLE_POS[:2], TABLE_YAW_DEG)
+    bowl_handle = gym.create_actor(
+        env,
+        bowl_asset,
+        pose(*bowl_xy, BOWL_SEAT_Z, yaw_deg=TABLE_YAW_DEG),
+        f"stirfry_bowl_ingredient_{index:02d}",
+        0,
+        0,
+    )
+    gym.set_actor_scale(env, bowl_handle, INGREDIENT_BOWL_SCALE)
 
 # 순수 A0509를 선반 상단(z=0.8)에 고정 장착 (OSC 동역학이 깔끔하도록 고정베이스 순수팔)
 arm = DoosanController(
@@ -72,7 +167,12 @@ arm.setup_osc()
 
 # ============================================================ [4] 뷰어 + 키 등록
 viewer = gym.create_viewer(sim, gymapi.CameraProperties())
-gym.viewer_camera_look_at(viewer, env, gymapi.Vec3(1.6, 1.6, 1.6), gymapi.Vec3(0, 0, 0.9))
+gym.viewer_camera_look_at(
+    viewer,
+    env,
+    gymapi.Vec3(2.4, -2.8, 2.4),
+    gymapi.Vec3(0.0, 0.25, 0.80),
+)
 
 keymap = {
     gymapi.KEY_1: "mode_jsc", gymapi.KEY_2: "mode_tsc", gymapi.KEY_3: "mode_osc",
