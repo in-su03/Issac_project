@@ -40,10 +40,10 @@ COMPLETE_TABLE_POS = (-0.625, 0.10, 0.0)
 PREPARE_TABLE_POS  = (0.10, -0.25, 0.0)
 TABLE_YAW_DEG      = 90.0
 TABLE_TOP_Z        = 0.85
-# STEP 기준 z=0.825 m부터 table과 간섭이 없으며, V-HACD/contact offset
-# 오차를 피하도록 5 mm 여유를 더 두고 중력으로 자연스럽게 안착시킨다.
-COOK_BOWL_Z        = TABLE_TOP_Z - 0.02
-INGREDIENT_BOWL_Z  = TABLE_TOP_Z - 0.02
+# STEP/explicit collision 기준 첫 무간섭 높이보다 약 1 mm 높게 시작한다.
+# 이전 5~8.5 mm 낙하 간격을 줄여 초기 접촉 충격은 낮추되, 겹친 채 생성하지 않는다.
+COOK_BOWL_Z        = 0.8225
+INGREDIENT_BOWL_Z  = 0.8255
 TABLE_ASSET_VERSION = "v2"
 A0509_STAND_URDF    = "urdf/a0509_stand/a0509_stand.urdf"
 COMPLETE_TABLE_URDF = "urdf/complete_table/complete_table.urdf"
@@ -64,9 +64,8 @@ REST_OFFSET         = 0.0
 
 BOWL_COLLISION_SHAPES = 129
 GRIPPER_COLLISION_SHAPES = 156
-TABLE_VHACD_RESOLUTION = 500_000
-TABLE_VHACD_MAX_HULLS = 128
-TABLE_VHACD_MAX_VERTICES = 64
+COMPLETE_TABLE_COLLISION_SHAPES = 77  # 72 top prisms + 5 lower-frame boxes
+PREPARE_TABLE_COLLISION_SHAPES = 405  # 397 top prisms + 8 lower-frame boxes
 
 # V2 STEP 원점 기준 실제 홀 중심. V2에서도 중심은 기존과 동일하다.
 # 조리 그릇은 Ø250 mm, 재료 그릇은 도면의 Ø200 mm 제한보다 작은
@@ -157,14 +156,10 @@ gym.create_actor(
 fixed_opts = gymapi.AssetOptions(); fixed_opts.fix_base_link = True
 bonitkit_asset = gym.load_asset(sim, asset_root, "urdf/bonitkit/bonitkit.urdf", fixed_opts)
 
-# PhysX는 V-HACD가 꺼진 triangle mesh를 단일 convex hull로 근사하므로,
-# table hole/support rim/open side가 막히지 않도록 table에만 decomposition을 켠다.
+# Table URDF가 STEP 상판에서 만든 convex prism을 collision별로 명시한다.
+# V-HACD를 다시 적용하면 홀/진입 슬롯이 근사 hull로 막힐 수 있으므로 사용하지 않는다.
 table_opts = gymapi.AssetOptions()
 table_opts.fix_base_link = True
-table_opts.vhacd_enabled = True
-table_opts.vhacd_params.resolution = TABLE_VHACD_RESOLUTION
-table_opts.vhacd_params.max_convex_hulls = TABLE_VHACD_MAX_HULLS
-table_opts.vhacd_params.max_num_vertices_per_ch = TABLE_VHACD_MAX_VERTICES
 complete_table_asset = gym.load_asset(
     sim, asset_root, COMPLETE_TABLE_URDF, table_opts
 )
@@ -255,7 +250,7 @@ bowl collision: {BOWL_COLLISION_SHAPES} explicit convex meshes
 gripper rigid: True (fixed to A0509 link_6)
 gripper collision: {GRIPPER_COLLISION_SHAPES} explicit convex meshes
 table fixed: {table_opts.fix_base_link}
-table collision: V-HACD (resolution={TABLE_VHACD_RESOLUTION}, max_hulls={TABLE_VHACD_MAX_HULLS})
+table collision: explicit convex meshes (complete={COMPLETE_TABLE_COLLISION_SHAPES}, prepare={PREPARE_TABLE_COLLISION_SHAPES})
 robot grasp control: NOT TESTED""")
 
 # ============================================================ [4] 뷰어 + 키 등록
