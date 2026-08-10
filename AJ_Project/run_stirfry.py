@@ -46,6 +46,25 @@ TABLE_ASSET_VERSION = "v2"
 A0509_STAND_URDF    = "urdf/a0509_stand/a0509_stand.urdf"
 COMPLETE_TABLE_URDF = "urdf/complete_table/complete_table.urdf"
 PREPARE_TABLE_URDF  = "urdf/prepare_table/prepare_table.urdf"
+BOWL_URDF            = "urdf/stirfry_bowl/stirfry_bowl.urdf"
+A0509_URDF           = "urdf/doosan_a0509/a0509.urdf"
+A0509_GRIPPER_URDF   = "urdf/a0509_stirfry_gripper/a0509_stirfry_gripper.urdf"
+GRIPPER_BODY_NAME    = "stirfry_gripper_link"
+
+# 실측값이 없으므로 dry metal contact의 보수적인 시작값이다. grasp 실험 전에
+# 재질/표면 상태에 맞춰 조정할 수 있는 tunable simulation parameter로 취급한다.
+BOWL_FRICTION       = 0.50
+GRIPPER_FRICTION    = 0.50
+TABLE_FRICTION      = 0.50
+CONTACT_RESTITUTION = 0.0
+CONTACT_OFFSET      = 0.001  # 1 mm: 0.5~1.0 mm 설계 clearance보다 과도하지 않게 설정
+REST_OFFSET         = 0.0
+
+BOWL_COLLISION_SHAPES = 129
+GRIPPER_COLLISION_SHAPES = 156
+TABLE_VHACD_RESOLUTION = 500_000
+TABLE_VHACD_MAX_HULLS = 128
+TABLE_VHACD_MAX_VERTICES = 64
 
 # V2 STEP 원점 기준 실제 홀 중심. V2에서도 중심은 기존과 동일하다.
 # 조리 그릇은 Ø250 mm, 재료 그릇은 도면의 Ø200 mm 제한보다 작은
@@ -76,6 +95,29 @@ def local_xy_to_world(local_xy, origin_xy, yaw_deg):
         origin_xy[1] + s * x + c * y,
     )
 
+
+def set_actor_contact_properties(actor_handle, friction):
+    """Actor의 모든 collision shape에 동일한 초기 contact material을 적용한다."""
+    shape_props = gym.get_actor_rigid_shape_properties(env, actor_handle)
+    for shape_prop in shape_props:
+        shape_prop.friction = friction
+        shape_prop.restitution = CONTACT_RESTITUTION
+    gym.set_actor_rigid_shape_properties(env, actor_handle, shape_props)
+
+
+def set_body_contact_properties(actor_handle, body_name, friction):
+    """통합 robot actor 중 지정 rigid body의 collision shape만 설정한다."""
+    body_names = gym.get_actor_rigid_body_names(env, actor_handle)
+    if body_name not in body_names:
+        raise RuntimeError(f"rigid body not found: {body_name}")
+    body_index = body_names.index(body_name)
+    shape_range = gym.get_actor_rigid_body_shape_indices(env, actor_handle)[body_index]
+    shape_props = gym.get_actor_rigid_shape_properties(env, actor_handle)
+    for shape_index in range(shape_range.start, shape_range.start + shape_range.count):
+        shape_props[shape_index].friction = friction
+        shape_props[shape_index].restitution = CONTACT_RESTITUTION
+    gym.set_actor_rigid_shape_properties(env, actor_handle, shape_props)
+
 # ============================================================ [1] 시뮬
 gym = gymapi.acquire_gym()
 args = gymutil.parse_arguments(description="A0509 keyboard JSC/TSC/OSC")
@@ -87,6 +129,8 @@ sp.physx.solver_type = 1
 sp.physx.use_gpu = True
 sp.physx.num_position_iterations = 8
 sp.physx.num_velocity_iterations = 1
+sp.physx.contact_offset = CONTACT_OFFSET
+sp.physx.rest_offset = REST_OFFSET
 sp.use_gpu_pipeline = False
 sim = gym.create_sim(args.compute_device_id, args.graphics_device_id, args.physics_engine, sp)
 pp = gymapi.PlaneParams(); pp.normal = gymapi.Vec3(0, 0, 1)
@@ -110,16 +154,30 @@ gym.create_actor(
 # 중앙 로봇을 감싸되 스탠드와 겹치지 않도록 0.15 m 띄운다.
 fixed_opts = gymapi.AssetOptions(); fixed_opts.fix_base_link = True
 bonitkit_asset = gym.load_asset(sim, asset_root, "urdf/bonitkit/bonitkit.urdf", fixed_opts)
+
+# PhysX는 V-HACD가 꺼진 triangle mesh를 단일 convex hull로 근사하므로,
+# table hole/support rim/open side가 막히지 않도록 table에만 decomposition을 켠다.
+table_opts = gymapi.AssetOptions()
+table_opts.fix_base_link = True
+table_opts.vhacd_enabled = True
+table_opts.vhacd_params.resolution = TABLE_VHACD_RESOLUTION
+table_opts.vhacd_params.max_convex_hulls = TABLE_VHACD_MAX_HULLS
+table_opts.vhacd_params.max_num_vertices_per_ch = TABLE_VHACD_MAX_VERTICES
 complete_table_asset = gym.load_asset(
-    sim, asset_root, COMPLETE_TABLE_URDF, fixed_opts
+    sim, asset_root, COMPLETE_TABLE_URDF, table_opts
 )
 prepare_table_asset = gym.load_asset(
-    sim, asset_root, PREPARE_TABLE_URDF, fixed_opts
+    sim, asset_root, PREPARE_TABLE_URDF, table_opts
 )
-bowl_asset = gym.load_asset(sim, asset_root, "urdf/stirfry_bowl/stirfry_bowl.urdf", fixed_opts)
+
+# 설비는 fixed로 유지하지만, bowl은 실제 접촉/중력에 반응하는 dynamic body다.
+bowl_opts = gymapi.AssetOptions()
+bowl_opts.fix_base_link = False
+bowl_opts.disable_gravity = False
+bowl_asset = gym.load_asset(sim, asset_root, BOWL_URDF, bowl_opts)
 
 gym.create_actor(env, bonitkit_asset, pose(*BONITKIT_POS), "bonitkit", 0, 0)
-gym.create_actor(
+complete_table_handle = gym.create_actor(
     env,
     complete_table_asset,
     pose(*COMPLETE_TABLE_POS, yaw_deg=TABLE_YAW_DEG),
@@ -127,7 +185,7 @@ gym.create_actor(
     0,
     0,
 )
-gym.create_actor(
+prepare_table_handle = gym.create_actor(
     env,
     prepare_table_asset,
     pose(*PREPARE_TABLE_POS, yaw_deg=TABLE_YAW_DEG),
@@ -140,7 +198,7 @@ gym.create_actor(
 complete_bowl_xy = local_xy_to_world(
     COMPLETE_BOWL_LOCAL_XY, COMPLETE_TABLE_POS[:2], TABLE_YAW_DEG
 )
-gym.create_actor(
+cook_bowl_handle = gym.create_actor(
     env,
     bowl_asset,
     pose(*complete_bowl_xy, COOK_BOWL_Z, yaw_deg=TABLE_YAW_DEG),
@@ -148,6 +206,7 @@ gym.create_actor(
     0,
     0,
 )
+set_actor_contact_properties(cook_bowl_handle, BOWL_FRICTION)
 
 # 준비 테이블의 Ø200 mm 홀 10개. 실제 local 중심을 유지하고 bowl만
 # 0.75배로 줄여 림 사이에 12.5 mm 간격을 둔다.
@@ -162,15 +221,22 @@ for index, local_xy in enumerate(PREPARE_BOWL_LOCAL_XY, start=1):
         0,
     )
     gym.set_actor_scale(env, bowl_handle, INGREDIENT_BOWL_SCALE)
+    set_actor_contact_properties(bowl_handle, BOWL_FRICTION)
 
-# 순수 A0509를 전용 stand 상판(z=0.81)에 고정 장착
-# (OSC 동역학이 깔끔하도록 고정베이스 순수팔)
+set_actor_contact_properties(complete_table_handle, TABLE_FRICTION)
+set_actor_contact_properties(prepare_table_handle, TABLE_FRICTION)
+
+# link_6에 rigid gripper가 fixed joint로 결합된 physics asset을 사용한다.
+# IK/FK는 기존 순수 A0509를 유지하며 controller 기능 자체는 변경하지 않는다.
 arm = DoosanController(
     gym, sim, env, asset_root,
-    urdf="urdf/doosan_a0509/a0509.urdf",
+    urdf=A0509_GRIPPER_URDF,
+    ik_urdf=A0509_URDF,
+    ee_link="link_6",
     fix_base=True,
     spawn_transform=gymapi.Transform(p=gymapi.Vec3(0, 0, BASE_Z)),
 )
+set_body_contact_properties(arm.actor, GRIPPER_BODY_NAME, GRIPPER_FRICTION)
 
 comp_opts = gymapi.AssetOptions(); comp_opts.fix_base_link = True
 comp_asset = gym.load_asset(sim, asset_root, "urdf/air_compressor/air_compressor.urdf", comp_opts)
@@ -179,6 +245,16 @@ gym.create_actor(env, comp_asset, gymapi.Transform(p=gymapi.Vec3(0, 0, 0.02)), "
 # ============================================================ [3] 동역학 텐서(OSC)
 gym.prepare_sim(sim)
 arm.setup_osc()
+
+print(f"""[GRASP PHYSICS READY]
+bowl dynamic: {not bowl_opts.fix_base_link}
+bowl gravity: {not bowl_opts.disable_gravity}
+bowl collision: {BOWL_COLLISION_SHAPES} explicit convex meshes
+gripper rigid: True (fixed to A0509 link_6)
+gripper collision: {GRIPPER_COLLISION_SHAPES} explicit convex meshes
+table fixed: {table_opts.fix_base_link}
+table collision: V-HACD (resolution={TABLE_VHACD_RESOLUTION}, max_hulls={TABLE_VHACD_MAX_HULLS})
+robot grasp control: NOT TESTED""")
 
 # ============================================================ [4] 뷰어 + 키 등록
 viewer = gym.create_viewer(sim, gymapi.CameraProperties())
