@@ -40,8 +40,10 @@ COMPLETE_TABLE_POS = (-0.625, 0.10, 0.0)
 PREPARE_TABLE_POS  = (0.10, -0.25, 0.0)
 TABLE_YAW_DEG      = 90.0
 TABLE_TOP_Z        = 0.85
-COOK_BOWL_Z        = TABLE_TOP_Z - 0.04
-INGREDIENT_BOWL_Z  = TABLE_TOP_Z - 0.026
+# STEP 기준 z=0.825 m부터 table과 간섭이 없으며, V-HACD/contact offset
+# 오차를 피하도록 5 mm 여유를 더 두고 중력으로 자연스럽게 안착시킨다.
+COOK_BOWL_Z        = TABLE_TOP_Z - 0.02
+INGREDIENT_BOWL_Z  = TABLE_TOP_Z - 0.02
 TABLE_ASSET_VERSION = "v2"
 A0509_STAND_URDF    = "urdf/a0509_stand/a0509_stand.urdf"
 COMPLETE_TABLE_URDF = "urdf/complete_table/complete_table.urdf"
