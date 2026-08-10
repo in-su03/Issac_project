@@ -26,7 +26,8 @@ from isaacgym import gymapi, gymutil   # torch보다 먼저
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "controllers"))
 from doosan_controller import DoosanController
 
-asset_root = os.environ.get("ISAAC_ASSETS", "/home/henry/Desktop/Issac_asset/isaac_assets")
+from asset_config import get_asset_root
+asset_root = get_asset_root()   # 컴퓨터마다 에셋 위치 자동 탐색/저장 (asset_config.py 참고)
 
 BASE_Z     = 0.81     # A0509_Stand.step의 장착 상판 높이
 CART_STEP  = 0.01     # 좌표 목표 이동 스텝(m)
@@ -238,6 +239,32 @@ set_body_contact_properties(arm.actor, GRIPPER_BODY_NAME, GRIPPER_FRICTION)
 comp_opts = gymapi.AssetOptions(); comp_opts.fix_base_link = True
 comp_asset = gym.load_asset(sim, asset_root, "urdf/air_compressor/air_compressor.urdf", comp_opts)
 gym.create_actor(env, comp_asset, gymapi.Transform(p=gymapi.Vec3(0, 0, 0.02)), "air_compressor", 0, 0)
+
+# ------------------------------------------------------------
+# Bonitkit
+# ------------------------------------------------------------
+
+bonit_opts = gymapi.AssetOptions()
+bonit_opts.fix_base_link = True
+
+bonit_asset = gym.load_asset(
+    sim,
+    asset_root,
+    "urdf/bonitkit/bonitkit.urdf",   # 실제 URDF 이름에 맞게 수정
+    bonit_opts
+)
+
+bonit_pose = gymapi.Transform()
+bonit_pose.p = gymapi.Vec3(0.8, 0.0, 0.0)
+
+gym.create_actor(
+    env,
+    bonit_asset,
+    bonit_pose,
+    "bonitkit",
+    0,
+    0
+)
 
 # ============================================================ [3] 동역학 텐서(OSC)
 gym.prepare_sim(sim)
