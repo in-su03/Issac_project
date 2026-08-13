@@ -2,8 +2,8 @@
 run_stirfry.py — 두산 A0509 볶음 공정 씬 + 수동/자동 제어
 
 씬: 볶음 도면을 기준으로 Bonitkit + V2 조리/준비 테이블 + 그릇 11개를
-    A0509 작업 반경 안에 배치한다. A0509는 robot cabinet 위에 올린
-    robot stand 상단 z=1.605에 고정 장착한다.
+    A0509 작업 반경 안에 배치한다. A0509는 robot cabinet 상판
+    z=0.805에 바로 고정 장착한다.
 제어: 기본은 실행 중 키로 모드를 바꿔가며 직접 조작한다.
       --auto를 주면 그리퍼를 조리 그릇 림 접촉 기준보다 180 mm 위까지
       이동한 뒤, 현재 자세를 유지한 채 키보드 미세조작으로 전환한다.
@@ -20,7 +20,7 @@ run_stirfry.py — 두산 A0509 볶음 공정 씬 + 수동/자동 제어
 
 제어 로직은 controllers/doosan_controller.py와
 controllers/doosan_arm_keyboard_teleop.py에 분리되어 있다.
-좌표 목표는 '로봇 베이스 기준'. OSC는 월드 텐서를 쓰므로 장착높이(+1.605) 보정해 넘긴다.
+좌표 목표는 '로봇 베이스 기준'. OSC는 월드 텐서를 쓰므로 장착높이(+0.805) 보정해 넘긴다.
 
 실행:  conda activate issac_env  &&  python run_stirfry.py
        python run_stirfry.py --auto   # 자동 접근 -> 키보드 미세조작
@@ -39,26 +39,20 @@ from asset_config import get_asset_root
 asset_root = get_asset_root()   # 컴퓨터마다 에셋 위치 자동 탐색/저장 (asset_config.py 참고)
 
 CABINET_HEIGHT = 0.805
-ROBOT_STAND_HEIGHT = 0.800
-BASE_Z = CABINET_HEIGHT + ROBOT_STAND_HEIGHT
+BASE_Z = CABINET_HEIGHT
 
-# 새 적층 구조에서도 기존에 검증한 로봇-테이블 상대 높이(40 mm)를 보존한다.
-# 따라서 바닥 기준 테이블/그릇 전체를 캐비닛 추가 높이만큼 함께 올린다.
-TABLE_LIFT_Z = BASE_Z - 0.810
-
-# 볶음 도면 배치. 새 stand(0.6 x 0.9 m)와 각 설비 사이에 최소
+# 볶음 도면 배치. robot cabinet(0.6 x 0.9 m)과 각 설비 사이에 최소
 # 0.15 m의 여유를 두면서, 모든 그릇 중심을 베이스에서 0.83 m 안에 둔다.
 BONITKIT_POS       = (0.0, 1.07, 0.0)
-COMPLETE_TABLE_POS = (-0.625, 0.10, TABLE_LIFT_Z)
-PREPARE_TABLE_POS  = (0.10, -0.25, TABLE_LIFT_Z)
+COMPLETE_TABLE_POS = (-0.625, 0.10, 0.0)
+PREPARE_TABLE_POS  = (0.10, -0.25, 0.0)
 TABLE_YAW_DEG      = 90.0
-TABLE_TOP_Z        = TABLE_LIFT_Z + 0.85
+TABLE_TOP_Z        = 0.85
 # STEP/explicit collision 기준 첫 무간섭 높이보다 약 1 mm 높게 시작한다.
 # 이전 5~8.5 mm 낙하 간격을 줄여 초기 접촉 충격은 낮추되, 겹친 채 생성하지 않는다.
-COOK_BOWL_Z        = TABLE_LIFT_Z + 0.8225
-INGREDIENT_BOWL_Z  = TABLE_LIFT_Z + 0.8255
+COOK_BOWL_Z        = 0.8225
+INGREDIENT_BOWL_Z  = 0.8255
 ROBOT_CABINET_URDF  = "urdf/robot_cabinetnplate/robot_cabinetnplate.urdf"
-ROBOT_STAND_URDF    = "urdf/robot_stand/robot_stand.urdf"
 AIR_COMPRESSOR_URDF = "urdf/air_compressor/air_compressor.urdf"
 DOOSAN_CONTROLLER_URDF = "urdf/doosan_controller/doosan_controller.urdf"
 COMPLETE_TABLE_URDF = "urdf/complete_table/complete_table.urdf"
@@ -176,11 +170,10 @@ pp = gymapi.PlaneParams(); pp.normal = gymapi.Vec3(0, 0, 1)
 gym.add_ground(sim, pp)
 
 # ============================================================ [2] 씬
-env = gym.create_env(sim, gymapi.Vec3(-1.5, -1.5, 0), gymapi.Vec3(1.5, 1.8, 3.2), 1)
+env = gym.create_env(sim, gymapi.Vec3(-1.5, -1.5, 0), gymapi.Vec3(1.5, 1.8, 2.2), 1)
 
 fixture_opts = gymapi.AssetOptions(); fixture_opts.fix_base_link = True
 cabinet_asset = gym.load_asset(sim, asset_root, ROBOT_CABINET_URDF, fixture_opts)
-stand_asset = gym.load_asset(sim, asset_root, ROBOT_STAND_URDF, fixture_opts)
 gym.create_actor(
     env,
     cabinet_asset,
@@ -188,14 +181,6 @@ gym.create_actor(
     "robot_cabinetnplate",
     0,
     CABINET_INTERNAL_COLLISION_FILTER,
-)
-gym.create_actor(
-    env,
-    stand_asset,
-    gymapi.Transform(p=gymapi.Vec3(0, 0, CABINET_HEIGHT)),
-    "robot_stand",
-    0,
-    0,
 )
 
 # 캐비닛 내부 0.60 x 0.90 m 공간에 긴 축을 X로 맞추고 Y 방향으로 나란히 둔다.
@@ -316,7 +301,7 @@ gripper rigid: True (fixed to A0509 link_6)
 gripper collision: {GRIPPER_COLLISION_SHAPES} explicit convex meshes
 table fixed: {table_opts.fix_base_link}
 table collision: explicit convex meshes (complete={COMPLETE_TABLE_COLLISION_SHAPES}, prepare={PREPARE_TABLE_COLLISION_SHAPES})
-robot fixture: cabinet z=0..{CABINET_HEIGHT:.3f} m -> stand z={CABINET_HEIGHT:.3f}..{BASE_Z:.3f} m
+robot fixture: A0509 mounted directly on cabinet top z={BASE_Z:.3f} m
 cabinet equipment: air compressor + Doosan controller, centered side-by-side
 robot grasp control: {"RECORDED AUTO GRASP" if args.auto_grasp else ("HYBRID (auto approach -> manual)" if args.auto else "MANUAL")}""")
 
@@ -325,8 +310,8 @@ viewer = gym.create_viewer(sim, gymapi.CameraProperties())
 gym.viewer_camera_look_at(
     viewer,
     env,
-    gymapi.Vec3(2.8, -3.2, 3.0),
-    gymapi.Vec3(0.0, 0.25, 1.55),
+    gymapi.Vec3(2.4, -2.8, 2.4),
+    gymapi.Vec3(0.0, 0.25, 0.80),
 )
 
 from doosan_arm_keyboard_teleop import DoosanArmKeyboardTeleop

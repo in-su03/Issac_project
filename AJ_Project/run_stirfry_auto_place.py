@@ -26,19 +26,16 @@ from asset_config import get_asset_root
 asset_root = get_asset_root()
 
 CABINET_HEIGHT = 0.805
-ROBOT_STAND_HEIGHT = 0.800
-BASE_Z = CABINET_HEIGHT + ROBOT_STAND_HEIGHT
-TABLE_LIFT_Z = BASE_Z - 0.810
+BASE_Z = CABINET_HEIGHT
 
 BONITKIT_POS       = (0.0, 1.07, 0.0)
-COMPLETE_TABLE_POS = (-0.625, 0.10, TABLE_LIFT_Z)
-PREPARE_TABLE_POS  = (0.10, -0.25, TABLE_LIFT_Z)
+COMPLETE_TABLE_POS = (-0.625, 0.10, 0.0)
+PREPARE_TABLE_POS  = (0.10, -0.25, 0.0)
 TABLE_YAW_DEG      = 90.0
-TABLE_TOP_Z        = TABLE_LIFT_Z + 0.85
-COOK_BOWL_Z        = TABLE_LIFT_Z + 0.8225
-INGREDIENT_BOWL_Z  = TABLE_LIFT_Z + 0.8255
+TABLE_TOP_Z        = 0.85
+COOK_BOWL_Z        = 0.8225
+INGREDIENT_BOWL_Z  = 0.8255
 ROBOT_CABINET_URDF  = "urdf/robot_cabinetnplate/robot_cabinetnplate.urdf"
-ROBOT_STAND_URDF    = "urdf/robot_stand/robot_stand.urdf"
 AIR_COMPRESSOR_URDF = "urdf/air_compressor/air_compressor.urdf"
 DOOSAN_CONTROLLER_URDF = "urdf/doosan_controller/doosan_controller.urdf"
 COMPLETE_TABLE_URDF = "urdf/complete_table/complete_table.urdf"
@@ -148,11 +145,10 @@ pp = gymapi.PlaneParams(); pp.normal = gymapi.Vec3(0, 0, 1)
 gym.add_ground(sim, pp)
 
 # ============================================================ [2] 씬
-env = gym.create_env(sim, gymapi.Vec3(-1.5, -1.5, 0), gymapi.Vec3(1.5, 1.8, 3.2), 1)
+env = gym.create_env(sim, gymapi.Vec3(-1.5, -1.5, 0), gymapi.Vec3(1.5, 1.8, 2.2), 1)
 
 fixture_opts = gymapi.AssetOptions(); fixture_opts.fix_base_link = True
 cabinet_asset = gym.load_asset(sim, asset_root, ROBOT_CABINET_URDF, fixture_opts)
-stand_asset = gym.load_asset(sim, asset_root, ROBOT_STAND_URDF, fixture_opts)
 gym.create_actor(
     env,
     cabinet_asset,
@@ -160,14 +156,6 @@ gym.create_actor(
     "robot_cabinetnplate",
     0,
     CABINET_INTERNAL_COLLISION_FILTER,
-)
-gym.create_actor(
-    env,
-    stand_asset,
-    gymapi.Transform(p=gymapi.Vec3(0, 0, CABINET_HEIGHT)),
-    "robot_stand",
-    0,
-    0,
 )
 
 compressor_asset = gym.load_asset(sim, asset_root, AIR_COMPRESSOR_URDF, fixture_opts)
@@ -276,7 +264,7 @@ print(f"""[GRASP PHYSICS READY]
 bowl dynamic: {not bowl_opts.fix_base_link}
 bowl gravity: {not bowl_opts.disable_gravity}
 table fixed: {table_opts.fix_base_link}
-robot fixture: cabinet + stand, A0509 base z={BASE_Z:.3f} m
+robot fixture: A0509 mounted directly on cabinet top z={BASE_Z:.3f} m
 cabinet equipment: air compressor + Doosan controller, centered side-by-side
 robot control: {"AUTO PLACE (3곳 순차 접근)" if args.auto_place else "MANUAL"}""")
 
@@ -285,8 +273,8 @@ viewer = gym.create_viewer(sim, gymapi.CameraProperties())
 gym.viewer_camera_look_at(
     viewer,
     env,
-    gymapi.Vec3(2.8, -3.2, 3.0),
-    gymapi.Vec3(0.0, 0.25, 1.55),
+    gymapi.Vec3(2.4, -2.8, 2.4),
+    gymapi.Vec3(0.0, 0.25, 0.80),
 )
 
 from doosan_arm_keyboard_teleop import DoosanArmKeyboardTeleop
