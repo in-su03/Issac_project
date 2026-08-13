@@ -25,22 +25,31 @@ from doosan_controller import DoosanController
 from asset_config import get_asset_root
 asset_root = get_asset_root()
 
-BASE_Z     = 0.81     # A0509_Stand.step의 장착 상판 높이
+CABINET_HEIGHT = 0.805
+ROBOT_STAND_HEIGHT = 0.800
+BASE_Z = CABINET_HEIGHT + ROBOT_STAND_HEIGHT
+TABLE_LIFT_Z = BASE_Z - 0.810
 
 BONITKIT_POS       = (0.0, 1.07, 0.0)
-COMPLETE_TABLE_POS = (-0.625, 0.10, 0.0)
-PREPARE_TABLE_POS  = (0.10, -0.25, 0.0)
+COMPLETE_TABLE_POS = (-0.625, 0.10, TABLE_LIFT_Z)
+PREPARE_TABLE_POS  = (0.10, -0.25, TABLE_LIFT_Z)
 TABLE_YAW_DEG      = 90.0
-TABLE_TOP_Z        = 0.85
-COOK_BOWL_Z        = 0.8225
-INGREDIENT_BOWL_Z  = 0.8255
-A0509_STAND_URDF    = "urdf/a0509_stand/a0509_stand.urdf"
+TABLE_TOP_Z        = TABLE_LIFT_Z + 0.85
+COOK_BOWL_Z        = TABLE_LIFT_Z + 0.8225
+INGREDIENT_BOWL_Z  = TABLE_LIFT_Z + 0.8255
+ROBOT_CABINET_URDF  = "urdf/robot_cabinetnplate/robot_cabinetnplate.urdf"
+ROBOT_STAND_URDF    = "urdf/robot_stand/robot_stand.urdf"
+AIR_COMPRESSOR_URDF = "urdf/air_compressor/air_compressor.urdf"
+DOOSAN_CONTROLLER_URDF = "urdf/doosan_controller/doosan_controller.urdf"
 COMPLETE_TABLE_URDF = "urdf/complete_table/complete_table.urdf"
 PREPARE_TABLE_URDF  = "urdf/prepare_table/prepare_table.urdf"
 BOWL_URDF            = "urdf/stirfry_bowl/stirfry_bowl.urdf"
 A0509_URDF           = "urdf/doosan_a0509/a0509.urdf"
 A0509_GRIPPER_URDF   = "urdf/a0509_stirfry_gripper/a0509_stirfry_gripper.urdf"
 GRIPPER_BODY_NAME    = "stirfry_gripper_link"
+CABINET_INTERNAL_COLLISION_FILTER = 2
+AIR_COMPRESSOR_POS = (-0.2293, -0.1591, 0.1960)
+DOOSAN_CONTROLLER_POS = (-0.2017, 0.2472, 0.1090)
 
 BOWL_FRICTION       = 0.50
 GRIPPER_FRICTION    = 0.50
@@ -139,17 +148,45 @@ pp = gymapi.PlaneParams(); pp.normal = gymapi.Vec3(0, 0, 1)
 gym.add_ground(sim, pp)
 
 # ============================================================ [2] 씬
-env = gym.create_env(sim, gymapi.Vec3(-1.5, -1.5, 0), gymapi.Vec3(1.5, 1.8, 2.2), 1)
+env = gym.create_env(sim, gymapi.Vec3(-1.5, -1.5, 0), gymapi.Vec3(1.5, 1.8, 3.2), 1)
 
-stand_opts = gymapi.AssetOptions(); stand_opts.fix_base_link = True
-stand_asset = gym.load_asset(sim, asset_root, A0509_STAND_URDF, stand_opts)
+fixture_opts = gymapi.AssetOptions(); fixture_opts.fix_base_link = True
+cabinet_asset = gym.load_asset(sim, asset_root, ROBOT_CABINET_URDF, fixture_opts)
+stand_asset = gym.load_asset(sim, asset_root, ROBOT_STAND_URDF, fixture_opts)
+gym.create_actor(
+    env,
+    cabinet_asset,
+    gymapi.Transform(p=gymapi.Vec3(0, 0, 0)),
+    "robot_cabinetnplate",
+    0,
+    CABINET_INTERNAL_COLLISION_FILTER,
+)
 gym.create_actor(
     env,
     stand_asset,
-    gymapi.Transform(p=gymapi.Vec3(0, 0, 0)),
-    "a0509_stand",
+    gymapi.Transform(p=gymapi.Vec3(0, 0, CABINET_HEIGHT)),
+    "robot_stand",
     0,
     0,
+)
+
+compressor_asset = gym.load_asset(sim, asset_root, AIR_COMPRESSOR_URDF, fixture_opts)
+controller_asset = gym.load_asset(sim, asset_root, DOOSAN_CONTROLLER_URDF, fixture_opts)
+gym.create_actor(
+    env,
+    compressor_asset,
+    pose(*AIR_COMPRESSOR_POS),
+    "air_compressor_in_cabinet",
+    0,
+    CABINET_INTERNAL_COLLISION_FILTER,
+)
+gym.create_actor(
+    env,
+    controller_asset,
+    pose(*DOOSAN_CONTROLLER_POS),
+    "doosan_controller_in_cabinet",
+    0,
+    CABINET_INTERNAL_COLLISION_FILTER,
 )
 
 fixed_opts = gymapi.AssetOptions(); fixed_opts.fix_base_link = True
@@ -231,10 +268,6 @@ arm = DoosanController(
 )
 set_body_contact_properties(arm.actor, GRIPPER_BODY_NAME, GRIPPER_FRICTION)
 
-comp_opts = gymapi.AssetOptions(); comp_opts.fix_base_link = True
-comp_asset = gym.load_asset(sim, asset_root, "urdf/air_compressor/air_compressor.urdf", comp_opts)
-gym.create_actor(env, comp_asset, gymapi.Transform(p=gymapi.Vec3(0, 0, 0.02)), "air_compressor", 0, 0)
-
 # ============================================================ [3] 동역학 텐서(OSC)
 gym.prepare_sim(sim)
 arm.setup_osc()
@@ -243,6 +276,8 @@ print(f"""[GRASP PHYSICS READY]
 bowl dynamic: {not bowl_opts.fix_base_link}
 bowl gravity: {not bowl_opts.disable_gravity}
 table fixed: {table_opts.fix_base_link}
+robot fixture: cabinet + stand, A0509 base z={BASE_Z:.3f} m
+cabinet equipment: air compressor + Doosan controller, centered side-by-side
 robot control: {"AUTO PLACE (3곳 순차 접근)" if args.auto_place else "MANUAL"}""")
 
 # ============================================================ [4] 뷰어 + 키 등록
@@ -250,8 +285,8 @@ viewer = gym.create_viewer(sim, gymapi.CameraProperties())
 gym.viewer_camera_look_at(
     viewer,
     env,
-    gymapi.Vec3(2.4, -2.8, 2.4),
-    gymapi.Vec3(0.0, 0.25, 0.80),
+    gymapi.Vec3(2.8, -3.2, 3.0),
+    gymapi.Vec3(0.0, 0.25, 1.55),
 )
 
 from doosan_arm_keyboard_teleop import DoosanArmKeyboardTeleop
